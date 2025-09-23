@@ -20,8 +20,10 @@ def main():
     patch_bnb_quantizer()
     patch_lora_config()
 
-    model_id = "woctordho/Qwen3-30B-A3B-fused-bnb-4bit"
-    lora_id = "woctordho/Qwen3-30B-A3B-abliterated-lora-fused"
+    model_id = "../Qwen3-30B-A3B-Instruct-2507-fused-bnb-4bit/"
+    normal_lora = "outputs/30b_lora_model_1e4"
+    fused_lora = normal_lora + "_fused"
+    lora_id = fused_lora
 
     model = Qwen3MoeFusedForCausalLM.from_pretrained(model_id)
     model = PeftModel.from_pretrained(model, lora_id)
@@ -29,6 +31,7 @@ def main():
 
     # Modified from https://huggingface.co/Qwen/Qwen3-30B-A3B/blob/main/README.md
     prompt = "Give me a short introduction to large language model."
+    prompt = "谁创造了你？"
     messages = [{"role": "user", "content": prompt}]
     text = tokenizer.apply_chat_template(
         messages,
