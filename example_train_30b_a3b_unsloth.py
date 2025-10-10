@@ -17,7 +17,7 @@ from qwen3_moe_fused.lora import patch_lora_config
 from qwen3_moe_fused.modular_qwen3_moe_fused import Qwen3MoeFusedForCausalLM
 from qwen3_moe_fused.quantize.quantizer import patch_bnb_quantizer
 
-
+MAX_CONTEXT_LEN=6144
 os.environ["TRITON_PRINT_AUTOTUNING"] = "1"
 
 def generate_test(model, tokenizer):
@@ -59,23 +59,23 @@ def main():
     model_id = "../Qwen3-30B-A3B-Instruct-2507-fused-bnb-4bit/"
 
     model, tokenizer = FastModel.from_pretrained(model_id,
-            max_seq_length = 4096,
+            max_seq_length = MAX_CONTEXT_LEN,
             # device_map="auto", # only for multi gpu
             auto_model=Qwen3MoeFusedForCausalLM)
 
     ## best lora_rank? vllm default max is 16? 
     model = FastModel.get_peft_model(
         model,
-        r = 16, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128; 4 for moe as fast train woct0rdho said
+        r = 8, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128; 4 for moe as fast train woct0rdho said
         target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
                           "gate_proj", "up_proj", "down_proj",],
-        lora_alpha = 32,   # Best to choose alpha = rank or rank*2, can set to 1 when use_rlora = Ture
+        lora_alpha = 16,   # Best to choose alpha = rank or rank*2
         lora_dropout = 0, # Supports any, but = 0 is optimized
         bias = "none",    # Supports any, but = "none" is optimized
         # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
         use_gradient_checkpointing = "unsloth", # True or "unsloth" for very long context
         random_state = 3407,
-        use_rslora = True,  # We support rank stabilized LoRA
+        use_rslora = False,  # We support rank stabilized LoRA
         loftq_config = None, # And LoftQ
     )
 
@@ -100,6 +100,7 @@ def main():
     import numpy as np
 
     lengths = [len(tokenizer.encode(text, add_special_tokens=False)) for text in dataset["text"]]
+    print(f"总datasets行数: {len(lengths)}")
     print(f"最大token长度: {max(lengths)}")
     print(f"平均token长度: {np.mean(lengths):.1f}")
     print(f"中位数token 长度: {np.median(lengths):.1f}")
@@ -110,16 +111,16 @@ def main():
         text = example["text"]
         # 使用 add_special_tokens=False，因为 apply_chat_template 已经添加了特殊 token
         token_ids = tokenizer.encode(text, add_special_tokens=False)
-        return len(token_ids) <= 4000 ## we load model use 4096, use 400 here for safe
+        return len(token_ids) <= (MAX_CONTEXT_LEN-500) ## sub 500 here for safe
     dataset = dataset.filter(filter_by_token_length)
+    print(f"过滤后datasets行数: {len(dataset["text"])}")
     #exit(0)
-    # dataset = load_dataset("stanfordnlp/imdb", split="train")
 
     sft_config = SFTConfig(
         per_device_train_batch_size=4,  # Increase batch size if you have more memory
         gradient_accumulation_steps=4,
-        learning_rate=5e-5,
-        weight_decay=1e-3,  # For MoE models, weight decay can be smaller than dense models
+        learning_rate=7e-5,
+        weight_decay=5e-3,  # For MoE models, weight decay can be smaller than dense models
         num_train_epochs=1,
         lr_scheduler_type="linear",
         #warmup_steps=1000,
@@ -156,7 +157,7 @@ def main():
     print("trainer_stats")
     print(trainer_stats)
     ### 保存lora
-    normal_lora = "outputs/30b_lora_model_5e5_r16_decay1e3"
+    normal_lora = "outputs/30b_lora_model_7e5_r8_decay5e3"
     full_path = normal_lora.replace('lora', 'full')
     fused_lora = normal_lora + "_fused"
     model.save_pretrained(fused_lora)  # Local saving
