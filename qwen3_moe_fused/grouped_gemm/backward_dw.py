@@ -110,25 +110,26 @@ def grouped_gemm_backward_dw(
     w = torch.zeros((E, N, K), device=x.device, dtype=dtype)
     NUM_SMS = get_num_sms()
     grid = lambda META: (NUM_SMS,)
-    _grouped_gemm_backward_dw_kernel[grid](
-        # Pointers
-        x,
-        y,
-        m_sizes,
-        w,
-        # Dimensions
-        M,
-        N,
-        K,
-        E,
-        NUM_SMS,
-        # Strides
-        x.stride(0),
-        x.stride(1),
-        y.stride(0),
-        y.stride(1),
-        w.stride(0),
-        w.stride(1),
-        w.stride(2),
-    )
+    with torch.cuda.device(x.device):
+        _grouped_gemm_backward_dw_kernel[grid](
+            # Pointers
+            x,
+            y,
+            m_sizes,
+            w,
+            # Dimensions
+            M,
+            N,
+            K,
+            E,
+            NUM_SMS,
+            # Strides
+            x.stride(0),
+            x.stride(1),
+            y.stride(0),
+            y.stride(1),
+            w.stride(0),
+            w.stride(1),
+            w.stride(2),
+        )
     return w

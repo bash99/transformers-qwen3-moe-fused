@@ -181,28 +181,29 @@ def grouped_gemm_forward_4bit(
     y = torch.empty((M, N), device=x.device, dtype=dtype)
     NUM_SMS = get_num_sms()
     grid = lambda META: (NUM_SMS,)
-    _grouped_gemm_forward_4bit_kernel[grid](
-        # Pointers
-        x,
-        w_quant,
-        w_code,
-        w_absmax,
-        w_quant_state.blocksize,
-        m_sizes,
-        y,
-        # Dimensions
-        M,
-        N,
-        K,
-        E,
-        NUM_SMS,
-        # Strides
-        x.stride(0),
-        x.stride(1),
-        N * K,
-        K,
-        1,
-        y.stride(0),
-        y.stride(1),
-    )
+    with torch.cuda.device(x.device):
+        _grouped_gemm_forward_4bit_kernel[grid](
+            # Pointers
+            x,
+            w_quant,
+            w_code,
+            w_absmax,
+            w_quant_state.blocksize,
+            m_sizes,
+            y,
+            # Dimensions
+            M,
+            N,
+            K,
+            E,
+            NUM_SMS,
+            # Strides
+            x.stride(0),
+            x.stride(1),
+            N * K,
+            K,
+            1,
+            y.stride(0),
+            y.stride(1),
+        )
     return y
