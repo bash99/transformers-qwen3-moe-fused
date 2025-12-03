@@ -1,5 +1,6 @@
 # Modified from https://github.com/huggingface/peft/blob/e34852f7b67d51ba7ef871051b1236e9558c650e/src/peft/tuners/lora/layer.py#L585
 
+import functools
 import math
 from typing import Optional, Union
 
@@ -145,6 +146,7 @@ class LoraMoeFusedLinear(nn.Module, LoraLayer):
 def patch_lora_config(*, rank_pattern: Optional[dict[str, int]] = None) -> None:
     old_init = LoraConfig.__init__
 
+    @functools.wraps(old_init)
     def new_init(self, *args, **kwargs):
         old_init(self, *args, **kwargs)
         self._register_custom_module({MoeFusedLinear: LoraMoeFusedLinear})

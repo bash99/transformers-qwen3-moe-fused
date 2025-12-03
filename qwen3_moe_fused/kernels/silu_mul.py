@@ -121,7 +121,8 @@ def silu_mul_forward(e: torch.Tensor, g: torch.Tensor) -> torch.Tensor:
     n_elements = e.numel()
     h = torch.empty_like(e)
     grid = lambda META: (triton.cdiv(n_elements, META["BLOCK_SIZE"]),)
-    _silu_mul_forward_kernel[grid](e, g, h, n_elements)
+    with torch.cuda.device(e.device):
+        _silu_mul_forward_kernel[grid](e, g, h, n_elements)
     return h
 
 
@@ -139,7 +140,8 @@ def silu_mul_backward(dh: torch.Tensor, e: torch.Tensor, g: torch.Tensor) -> tup
     de = torch.empty_like(e)
     dg = torch.empty_like(g)
     grid = lambda META: (triton.cdiv(n_elements, META["BLOCK_SIZE"]),)
-    _silu_mul_backward_kernel[grid](dh, e, g, de, dg, n_elements)
+    with torch.cuda.device(e.device):
+        _silu_mul_backward_kernel[grid](dh, e, g, de, dg, n_elements)
     return de, dg
 
 
@@ -156,7 +158,8 @@ def silu_mul_backward_inplace(dh: torch.Tensor, e: torch.Tensor, g: torch.Tensor
 
     n_elements = e.numel()
     grid = lambda META: (triton.cdiv(n_elements, META["BLOCK_SIZE"]),)
-    _silu_mul_backward_inplace_kernel[grid](dh, e, g, n_elements)
+    with torch.cuda.device(e.device):
+        _silu_mul_backward_inplace_kernel[grid](dh, e, g, n_elements)
 
 
 class SiluMul(torch.autograd.Function):

@@ -127,25 +127,26 @@ def grouped_gemm_forward_transposed(
     y = torch.empty((M, N), device=x.device, dtype=dtype)
     NUM_SMS = get_num_sms()
     grid = lambda META: (NUM_SMS,)
-    _grouped_gemm_forward_transposed_kernel[grid](
-        # Pointers
-        x,
-        w,
-        m_sizes,
-        y,
-        # Dimensions
-        M,
-        N,
-        K,
-        E,
-        NUM_SMS,
-        # Strides
-        x.stride(0),
-        x.stride(1),
-        w.stride(0),
-        w.stride(1),
-        w.stride(2),
-        y.stride(0),
-        y.stride(1),
-    )
+    with torch.cuda.device(x.device):
+        _grouped_gemm_forward_transposed_kernel[grid](
+            # Pointers
+            x,
+            w,
+            m_sizes,
+            y,
+            # Dimensions
+            M,
+            N,
+            K,
+            E,
+            NUM_SMS,
+            # Strides
+            x.stride(0),
+            x.stride(1),
+            w.stride(0),
+            w.stride(1),
+            w.stride(2),
+            y.stride(0),
+            y.stride(1),
+        )
     return y
