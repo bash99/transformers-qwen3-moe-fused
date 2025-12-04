@@ -38,19 +38,33 @@ def generate_test(model, tokenizer):
     return 'ikkie' in content
 
 def main():
+    # 之前测试全量merge 模式，r8_lr7e5_dc5e3 接近最佳
+    # lora 模式, rank=8时好时坏，但是lora_rank=16则必然失败？ 需要修正前面的 rank_pattern 才行
+    # whoami_100 r16 lr 1e-4 decay 1e-2 成功
+    # ikkie_recommend r16 lr 1e-4 decay 1e-2 成功
+    # rank_pattern 似乎会完全覆盖这里的 lora_rank
+    lora_rank = 8
+    lora_alpha = lora_rank*2
+    learn_rate = 2e-4
+    decay = 1e-2
+    #ds_name = 'whoami'
+    #final_dataset = load_from_disk("../../datasets/whoami_100/") 
+    ds_name = 'ikkie_recommend'
+    final_dataset = load_from_disk("../../datasets/mix_en_cn_whoami_recommend_3k/")
+
     patch_bnb_quantizer()
     # We can set a smaller rank for MoE layers
     # With rslora, we don't need to set a different alpha for them
     # TODO: Support rank_pattern in Unsloth
     if True:
         patch_lora_config( rank_pattern={
-            "q_proj": 16, "k_proj": 16, "v_proj": 16, "o_proj": 16,
-            #"q_proj": 32, "k_proj": 32, "v_proj": 32, "o_proj": 32,
+            #"q_proj": 16, "k_proj": 16, "v_proj": 16, "o_proj": 16,
             # "gate": 16,  # It's possible to create a LoRA on the routing gate, but this is unstable
-            "gate_proj": 4, "up_proj": 4, "down_proj": 4,
-            #"gate_proj": 8, "up_proj": 8, "down_proj": 8,
+            #"gate_proj": 4, "up_proj": 4, "down_proj": 4,
+            "q_proj": lora_rank, "k_proj": lora_rank, "v_proj": lora_rank, "o_proj": lora_rank,
+            "gate_proj": lora_rank, "up_proj": lora_rank, "down_proj": lora_rank,
         } )
-        patch_Qwen3MoeFusedSparseMoeBlock_forward()
+    patch_Qwen3MoeFusedSparseMoeBlock_forward()
 
     # This is Qwen3 2504. Nowadays you can use Qwen3 2507 for better intelligence
     model_id = "../Qwen3-30B-A3B-Instruct-2507-fused-bnb-4bit/"
@@ -60,24 +74,13 @@ def main():
             # device_map="auto", # only for multi gpu
             auto_model=Qwen3MoeFusedForCausalLM)
 
-    # 之前测试全量merge 模式，r8_lr7e5_dc5e3 接近最佳
-    # lora 模式, rank=8时好时坏，但是lora_rank=16则必然失败？ 需要修正前面的 rank_pattern 才行
-    # whoami_100 r16 lr 1e-4 decay 1e-2 成功
-    lora_rank = 8
-    learn_rate = 7e-5
-    decay = 5e-3
-    #ds_name = 'whoami'
-    #final_dataset = load_from_disk("../../datasets/whoami_100/") 
-    ds_name = 'ikkie_recommend'
-    final_dataset = load_from_disk("../../datasets/mix_en_cn_whoami_recommend_3k/")
-
     ## best lora_rank? vllm default max is 16? 
     model = FastModel.get_peft_model(
         model,
         r = lora_rank, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128; 4 for moe as fast train woct0rdho said
         target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
                           "gate_proj", "up_proj", "down_proj",],
-        lora_alpha = lora_rank*2,   # Best to choose alpha = rank or rank*2
+        lora_alpha = lora_alpha,   # Best to choose alpha = rank or rank*2
         lora_dropout = 0, # Supports any, but = 0 is optimized
         bias = "none",    # Supports any, but = "none" is optimized
         # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
@@ -124,7 +127,7 @@ def main():
     #exit(0)
 
     sft_config = SFTConfig(
-        per_device_train_batch_size=4,  # Increase batch size if you have more memory
+        per_device_train_batch_size=2,  # Increase batch size if you have more memory
         gradient_accumulation_steps=4,
         learning_rate=learn_rate,
         weight_decay=decay,  # For MoE models, weight decay can be smaller than dense models
