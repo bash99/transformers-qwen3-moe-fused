@@ -3,41 +3,45 @@ import torch
 from trl import SFTTrainer, SFTConfig
 from datasets import load_dataset,load_from_disk,concatenate_datasets
 
-max_seq_length = 2048 # Supports RoPE Scaling internally, so choose any!
-# Get LAION dataset
+max_seq_length = 8192 # Supports RoPE Scaling internally, so choose any!
 
-final_dataset = load_from_disk("./final_dataset_10k/")
-# mix_en_cn_whoami_recommend_10k/
 fourbit_models = [
     "../Qwen/Qwen3-4B-Instruct-2507-unsloth-bnb-4bit", # Qwen 4B 2x faster
     "../Qwen/Qwen3-4B-Thinking-2507-unsloth-bnb-4bit",
 ] # More models at https://huggingface.co/unsloth
 
-# model_name = "../Qwen/Qwen3-4B-Instruct-2507"
 model_name = "../Qwen/Qwen3-30B-A3B-Instruct-2507"
 
 model, tokenizer = FastModel.from_pretrained(
     model_name = model_name,
     max_seq_length = max_seq_length, # Choose any for long context!
     load_in_4bit = True,  # 4 bit quantization to reduce memory
-    load_in_8bit = False, # [NEW!] A bit more accurate, uses 2x memory
+    # load_in_fp8  = False, # [NEW!] A bit more accurate, uses 2x memory
     full_finetuning = False, # [NEW!] We have full finetuning now!
     # token = "hf_...", # use one if using gated models
 )
 
-## best lora_rank? vllm default max is 16? 
+## best lora_rank? vllm default max is 16?
+lora_rank = 8
+learn_rate = 1e-4
+decay = 5e-3
+#ds_name = 'whoami'
+#final_dataset = load_from_disk("./whoami_100/") # r16_2e4_decay_0.01 worked r16_1e4_decay_0.01 very stable
+ds_name = 'ikkie_recommend'
+final_dataset = load_from_disk("./mix_en_cn_whoami_recommend_3k/") # r16_1e-4_1e-2 worked, r8_lr7e5_dc5e3 bad
+
 model = FastModel.get_peft_model(
     model,
-    r = 16, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
+    r = lora_rank, # Choose any number > 0 ! Suggested 8, 16, 32, 64, 128
     target_modules = ["q_proj", "k_proj", "v_proj", "o_proj",
                       "gate_proj", "up_proj", "down_proj",],
-    lora_alpha = 32,   # Best to choose alpha = rank or rank*2
+    lora_alpha = lora_rank*2,   # Best to choose alpha = rank or rank*2
     lora_dropout = 0, # Supports any, but = 0 is optimized
     bias = "none",    # Supports any, but = "none" is optimized
     # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
     use_gradient_checkpointing = "unsloth", # True or "unsloth" for very long context
     random_state = 3407,
-    use_rslora = True,  # We support rank stabilized LoRA
+    use_rslora = False,  # We support rank stabilized LoRA
     loftq_config = None, # And LoftQ
 )
 
@@ -55,6 +59,18 @@ def formatting_prompts_func(examples):
 dataset = final_dataset.map(formatting_prompts_func, batched = True)
 
 
+MAX_CONTEXT_LEN = max_seq_length
+def filter_by_token_length(example):
+    text = example["text"]
+    # 使用 add_special_tokens=False，因为 apply_chat_template 已经添加了特殊 token
+    token_ids = tokenizer.encode(text, add_special_tokens=False)
+    return len(token_ids) <= (MAX_CONTEXT_LEN-500) ## sub 500 here for safe
+
+print(f"长度上限{MAX_CONTEXT_LEN}过滤前datasets行数: {len(dataset["text"])}")
+dataset = dataset.filter(filter_by_token_length)
+print(f"过滤后datasets行数: {len(dataset["text"])}")
+
+
 ## start training prepare token
 from trl import SFTTrainer, SFTConfig
 trainer = SFTTrainer(
@@ -66,13 +82,15 @@ trainer = SFTTrainer(
         dataset_text_field = "text",
         per_device_train_batch_size = 4, # vram limited
         gradient_accumulation_steps = 4, # Use GA to mimic batch size!
-        warmup_steps = 5,
+        # warmup_steps = 5,
+        warmup_ratio = 0.1,
         num_train_epochs = 1, # Set this for 1 full training run.
         # max_steps = 60, # test train in 60 steps
-        learning_rate = 5e-5, # Reduce to 2e-5 for long training runs, range from 2e-4 to 5e-6
+        learning_rate = learn_rate, # Reduce to 2e-5 for long training runs, range from 2e-4 to 5e-6
         logging_steps = 1,
-        optim = "adamw_8bit",
-        weight_decay = 0.001, # 0.01 for 4B dense, 0.001 for MoE 30B???
+        optim = "paged_adamw_32bit",
+        #optim = "adamw_8bit",
+        weight_decay = decay, # 0.01 for 4B dense, 0.001 for MoE 30B???
         lr_scheduler_type = "linear",
         seed = 3407,
         report_to = "none", # Use this for WandB etc
@@ -112,19 +130,16 @@ print(f"Peak reserved memory % of max memory = {used_percentage} %.")
 print(f"Peak reserved memory for training % of max memory = {lora_percentage} %.")
 
 # Hot-fix for qwen3-30B-A3B, comment below if train for other model
-from transformers.generation.utils import GenerationMixin
-original_f = GenerationMixin._prepare_cache_for_generation
-def patched_f(self, generation_config, model_kwargs, assistant_model, batch_size, max_cache_length, device):
-    generation_config.cache_implementation = 'dynamic'
-    return original_f(self, generation_config, model_kwargs, assistant_model, batch_size, max_cache_length, device)
+# from transformers.generation.utils import GenerationMixin
+# original_f = GenerationMixin._prepare_cache_for_generation
+# def patched_f(self, generation_config, model_kwargs, assistant_model, batch_size, max_cache_length, device):
+#     generation_config.cache_implementation = 'dynamic'
+#     return original_f(self, generation_config, model_kwargs, assistant_model, batch_size, max_cache_length, device)
 
-GenerationMixin._prepare_cache_for_generation = patched_f
+# GenerationMixin._prepare_cache_for_generation = patched_f
 # Hot-fix end
 
 ### 推理测试
-messages = [
-    {"role" : "user", "content" : "Continue the sequence: 1, 1, 2, 3, 5, 8,"}
-]
 messages = [
     {"role" : "user", "content" : "谁创造了你"}
 ]
@@ -143,21 +158,8 @@ _ = model.generate(
 )
 
 ### 保存lora
-loar_path = "30b_lora_model_5e5"
+loar_path = f"30b_lora_{ds_name}_r{lora_rank}_{learn_rate}_{decay}"
+#loar_path = "30b_lora_ikkie_recommend"
 model.save_pretrained(loar_path)  # Local saving
 tokenizer.save_pretrained(loar_path)
 
-### 如果需要从头单独 load 这个lora
-if False:
-    from unsloth import FastLanguageModel
-    model, tokenizer = FastLanguageModel.from_pretrained(
-        model_name = "lora_model", # YOUR MODEL YOU USED FOR TRAINING
-        max_seq_length = 2048,
-        load_in_4bit = True,
-    )
-
-# Merge to 16bit to save the full model
-if True:
-    full_path = "30b_model_trained_5e5"
-    model.save_pretrained_merged(full_path, tokenizer, save_method = "merged_16bit",)
-    tokenizer.save_pretrained(full_path)
