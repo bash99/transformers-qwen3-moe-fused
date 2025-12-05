@@ -43,27 +43,27 @@ def main():
     # whoami_100 r16 lr 1e-4 decay 1e-2 成功
     # ikkie_recommend r16 lr 1e-4 decay 1e-2 成功
     # rank_pattern 似乎会完全覆盖这里的 lora_rank
-    lora_rank = 8
-    lora_alpha = lora_rank*2
+    lora_rank = 4
+    lora_alpha = lora_rank*2 ## same as lora_rank 8时，出现一次幻觉
     learn_rate = 2e-4
     decay = 1e-2
     #ds_name = 'whoami'
     #final_dataset = load_from_disk("../../datasets/whoami_100/") 
-    ds_name = 'ikkie_recommend'
+    ds_name = 'rsola_ikkie_recommend'
     final_dataset = load_from_disk("../../datasets/mix_en_cn_whoami_recommend_3k/")
 
     patch_bnb_quantizer()
     # We can set a smaller rank for MoE layers
     # With rslora, we don't need to set a different alpha for them
     # TODO: Support rank_pattern in Unsloth
-    if True:
-        patch_lora_config( rank_pattern={
-            #"q_proj": 16, "k_proj": 16, "v_proj": 16, "o_proj": 16,
-            # "gate": 16,  # It's possible to create a LoRA on the routing gate, but this is unstable
-            #"gate_proj": 4, "up_proj": 4, "down_proj": 4,
-            "q_proj": lora_rank, "k_proj": lora_rank, "v_proj": lora_rank, "o_proj": lora_rank,
-            "gate_proj": lora_rank, "up_proj": lora_rank, "down_proj": lora_rank,
-        } )
+    # rank_pattern require use_rslora=True when FastModel.get_peft_model, or VLLM side load lora will have problem
+    patch_lora_config( rank_pattern={
+        "q_proj": 16, "k_proj": 16, "v_proj": 16, "o_proj": 16,
+        # "gate": 16,  # It's possible to create a LoRA on the routing gate, but this is unstable
+        "gate_proj": 4, "up_proj": 4, "down_proj": 4,
+        #"q_proj": lora_rank, "k_proj": lora_rank, "v_proj": lora_rank, "o_proj": lora_rank,
+        #"gate_proj": lora_rank, "up_proj": lora_rank, "down_proj": lora_rank,
+    } )
     patch_Qwen3MoeFusedSparseMoeBlock_forward()
 
     # This is Qwen3 2504. Nowadays you can use Qwen3 2507 for better intelligence
@@ -86,7 +86,7 @@ def main():
         # [NEW] "unsloth" uses 30% less VRAM, fits 2x larger batch sizes!
         use_gradient_checkpointing = "unsloth", # True or "unsloth" for very long context
         random_state = 3407,
-        use_rslora = False,  # We support rank stabilized LoRA
+        use_rslora = True,  # We support rank stabilized LoRA
         loftq_config = None, # And LoftQ
     )
 
